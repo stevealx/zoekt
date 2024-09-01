@@ -17,6 +17,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -537,12 +538,19 @@ func (s *Server) serveListReposErr(q query.Q, qStr string, r *http.Request) (*Re
 	return &res, nil
 }
 
+type FileContent struct {
+	Content  string
+	Encoding string
+}
+
 func (s *Server) servePrintErr(w http.ResponseWriter, r *http.Request) error {
 	qvals := r.URL.Query()
 	fileStr := qvals.Get("f")
 	repoStr := qvals.Get("r")
 	queryStr := qvals.Get("q")
 	numStr := qvals.Get("num")
+	format := qvals.Get("format")
+
 	num, err := strconv.Atoi(numStr)
 	if err != nil || num <= 0 {
 		num = defaultNumResults
@@ -593,6 +601,25 @@ func (s *Server) servePrintErr(w http.ResponseWriter, r *http.Request) error {
 	strLines := make([]string, 0, len(byteLines))
 	for _, l := range byteLines {
 		strLines = append(strLines, string(l))
+	}
+
+	if format == "json" {
+		w.Header().Add("Content-Type", "application/json")
+		encoder := json.NewEncoder(w)
+
+		content := strings.Join(strLines, "\n")
+		encodedContent := base64.StdEncoding.EncodeToString([]byte(content))
+
+		result := FileContent{
+			Content:  encodedContent,
+			Encoding: "base64",
+		}
+
+		if err := encoder.Encode(result); err != nil {
+			return err
+		}
+
+		return nil
 	}
 
 	d := PrintInput{
