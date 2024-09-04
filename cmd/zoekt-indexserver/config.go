@@ -30,6 +30,13 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
+// The config wrapper allows us to use a mirror config format that has the top-level JSON
+// object be a object, instead of an array. This allows us to specify a "$schema" field, and
+// thus improve the developer experience when working in editors like vscode.
+type ConfigWrapper struct {
+	Configs []ConfigEntry
+}
+
 type ConfigEntry struct {
 	GithubUser             string
 	GithubOrg              string
@@ -90,11 +97,20 @@ func readConfigURL(u string) ([]ConfigEntry, error) {
 		return nil, readErr
 	}
 
-	var result []ConfigEntry
+	// First, try to unmarshal the new format.
+	var result ConfigWrapper
 	if err := json.Unmarshal(body, &result); err != nil {
+
+		// If that doesn't work, try to unmarshal the old format.
+		var configs []ConfigEntry
+		if err := json.Unmarshal(body, &configs); err != nil {
 		return nil, err
 	}
-	return result, nil
+		result.Configs = configs
+	}
+
+	configs := result.Configs
+	return configs, nil
 }
 
 func watchFile(path string) (<-chan struct{}, error) {
