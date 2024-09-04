@@ -43,7 +43,7 @@ func main() {
 	token := flag.String("token",
 		filepath.Join(os.Getenv("HOME"), ".gitlab-token"),
 		"file holding API token.")
-	isMember := flag.Bool("membership", false, "only mirror repos this user is a member of ")
+	isMember := flag.Bool("membership", true, "only mirror repos this user is a member of ")
 	isPublic := flag.Bool("public", false, "only mirror public repos")
 	deleteRepos := flag.Bool("delete", false, "delete missing repos")
 	namePattern := flag.String("name", "", "only clone repos whose name matches the given regexp.")
