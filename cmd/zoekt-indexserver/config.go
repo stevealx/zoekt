@@ -58,7 +58,8 @@ type ConfigEntry struct {
 	Active                 bool
 	NoArchived             bool
 	GerritFetchMetaConfig  bool
-  GerritRepoNameFormat   string
+	GerritRepoNameFormat   string
+	IncludeForks           bool
 }
 
 func randomize(entries []ConfigEntry) []ConfigEntry {
@@ -104,8 +105,8 @@ func readConfigURL(u string) ([]ConfigEntry, error) {
 		// If that doesn't work, try to unmarshal the old format.
 		var configs []ConfigEntry
 		if err := json.Unmarshal(body, &configs); err != nil {
-		return nil, err
-	}
+			return nil, err
+		}
 		result.Configs = configs
 	}
 
@@ -211,6 +212,9 @@ func executeMirror(cfg []ConfigEntry, repoDir string, pendingRepos chan<- string
 			if c.NoArchived {
 				cmd.Args = append(cmd.Args, "-no_archived")
 			}
+			if c.IncludeForks {
+				cmd.Args = append(cmd.Args, "-forks")
+			}
 		} else if c.GitilesURL != "" {
 			cmd = exec.Command("zoekt-mirror-gitiles",
 				"-dest", repoDir, "-name", c.Name)
@@ -277,9 +281,9 @@ func executeMirror(cfg []ConfigEntry, repoDir string, pendingRepos chan<- string
 			if c.Active {
 				cmd.Args = append(cmd.Args, "-active")
 			}
-      if c.GerritFetchMetaConfig {
+			if c.GerritFetchMetaConfig {
 				cmd.Args = append(cmd.Args, "-fetch-meta-config")
-      }
+			}
 			if c.GerritRepoNameFormat != "" {
 				cmd.Args = append(cmd.Args, "-repo-name-format", c.GerritRepoNameFormat)
 			}
