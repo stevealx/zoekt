@@ -132,9 +132,26 @@ var (
 		Help: "Counts the number of repos we stopped tracking.",
 	})
 
-	clientMetricsOnce sync.Once
-	clientMetrics     *grpcprom.ClientMetrics
+	// clientMetricsOnce returns a singleton instance of the client metrics
+	// that are shared across all gRPC clients that this process creates.
+	//
+	// This function panics if the metrics cannot be registered with the default
+	// Prometheus registry.
+	clientMetricsOnce = sync.OnceValue(func() *grpcprom.ClientMetrics {
+		clientMetrics := grpcprom.NewClientMetrics(
+			grpcprom.WithClientCounterOptions(),
+			grpcprom.WithClientHandlingTimeHistogram(), // record the overall request latency for a gRPC request
+			grpcprom.WithClientStreamRecvHistogram(),   // record how long it takes for a client to receive a message during a streaming RPC
+			grpcprom.WithClientStreamSendHistogram(),   // record how long it takes for a client to send a message during a streaming RPC
+		)
+		prometheus.DefaultRegisterer.MustRegister(clientMetrics)
+		return clientMetrics
+	})
 )
+
+// 1 MB; match https://sourcegraph.sgdev.org/github.com/sourcegraph/sourcegraph/-/blob/cmd/symbols/internal/symbols/search.go#L22
+// NOTE: if you change this, you must also update gitIndex to use the same value when fetching the repo.
+const MaxFileSize = 1 << 20
 
 // set of repositories that we want to capture separate indexing metrics for
 var reposWithSeparateIndexingMetrics = make(map[string]struct{})
@@ -526,6 +543,7 @@ func jitterTicker(d time.Duration, sig ...os.Signal) <-chan struct{} {
 // Index starts an index job for repo name at commit.
 func (s *Server) Index(args *indexArgs) (state indexState, err error) {
 	tr := trace.New("index", args.Name)
+	tr.SetMaxEvents(30) // Ensure we capture all indexing events
 
 	defer func() {
 		if err != nil {
@@ -655,10 +673,7 @@ func (s *Server) indexArgs(opts IndexOptions) *indexArgs {
 		IndexDir:     s.IndexDir,
 		Parallelism:  parallelism,
 		Incremental:  true,
-
-		// 1 MB; match https://sourcegraph.sgdev.org/github.com/sourcegraph/sourcegraph/-/blob/cmd/symbols/internal/symbols/search.go#L22
-		FileLimit: 1 << 20,
-
+		FileLimit:    MaxFileSize,
 		ShardMerging: s.shardMerging,
 	}
 }
@@ -753,7 +768,7 @@ var rootTmpl = template.Must(template.New("name").Parse(`
             <a href="?show_repos=false">hide repos</a><br />
             <table style="margin-top: 20px">
                 <th style="text-align:left">Name</th>
-                <th style="text-align:left">ID</th>
+                <th style="text-align:left">ID (click to reindex)</th>
                 {{range .Repos}}
                     <tr>
                         <td>{{.Name}}</td>
@@ -1220,7 +1235,6 @@ type rootConfig struct {
 	listen           string
 	hostname         string
 	cpuFraction      float64
-	blockProfileRate int
 
 	// config values related to shard merging
 	disableShardMerging bool
@@ -1243,7 +1257,6 @@ func (rc *rootConfig) registerRootFlags(fs *flag.FlagSet) {
 	fs.StringVar(&rc.listen, "listen", ":6072", "listen on this address.")
 	fs.StringVar(&rc.hostname, "hostname", zoekt.HostnameBestEffort(), "the name we advertise to Sourcegraph when asking for the list of repositories to index. Can also be set via the NODE_NAME environment variable.")
 	fs.Float64Var(&rc.cpuFraction, "cpu_fraction", 1.0, "use this fraction of the cores for indexing.")
-	fs.IntVar(&rc.blockProfileRate, "block_profile_rate", getEnvWithDefaultInt("BLOCK_PROFILE_RATE", -1), "Sampling rate of Go's block profiler in nanoseconds. Values <=0 disable the blocking profiler Var(default). A value of 1 includes every blocking event. See https://pkg.go.dev/runtime#SetBlockProfileRate")
 	fs.DurationVar(&rc.backoffDuration, "backoff_duration", getEnvWithDefaultDuration("BACKOFF_DURATION", 10*time.Minute), "for the given duration we backoff from enqueue operations for a repository that's failed its previous indexing attempt. Consecutive failures increase the duration of the delay linearly up to the maxBackoffDuration. A negative value disables indexing backoff.")
 	fs.DurationVar(&rc.maxBackoffDuration, "max_backoff_duration", getEnvWithDefaultDuration("MAX_BACKOFF_DURATION", 120*time.Minute), "the maximum duration to backoff from enqueueing a repo for indexing.  A negative value disables indexing backoff.")
 
@@ -1262,7 +1275,7 @@ func startServer(conf rootConfig) error {
 		return err
 	}
 
-	profiler.Init("zoekt-sourcegraph-indexserver", zoekt.Version, conf.blockProfileRate)
+	profiler.Init("zoekt-sourcegraph-indexserver")
 	setCompoundShardCounter(s.IndexDir)
 
 	if conf.listen != "" {
@@ -1353,10 +1366,6 @@ func newServer(conf rootConfig) (*Server, error) {
 
 	// Tune GOMAXPROCS to match Linux container CPU quota.
 	_, _ = maxprocs.Set()
-
-	// Set the sampling rate of Go's block profiler: https://github.com/DataDog/go-profiler-notes/blob/main/guide/README.md#block-profiler.
-	// The block profiler is disabled by default and should be enabled with care in production
-	runtime.SetBlockProfileRate(conf.blockProfileRate)
 
 	// Automatically prepend our own path at the front, to minimize
 	// required configuration.
@@ -1503,7 +1512,7 @@ func internalActorStreamInterceptor() grpc.StreamClientInterceptor {
 const defaultGRPCMessageReceiveSizeBytes = 90 * 1024 * 1024 // 90 MB
 
 func dialGRPCClient(addr string, logger sglog.Logger, additionalOpts ...grpc.DialOption) (proto.ZoektConfigurationServiceClient, error) {
-	metrics := mustGetClientMetrics()
+	metrics := clientMetricsOnce()
 
 	// If the service seems to be unavailable, this
 	// will retry after [1s, 2s, 4s, 8s, 16s] with a jitterFraction of .1
@@ -1555,26 +1564,6 @@ func dialGRPCClient(addr string, logger sglog.Logger, additionalOpts ...grpc.Dia
 
 	client := proto.NewZoektConfigurationServiceClient(cc)
 	return client, nil
-}
-
-// mustGetClientMetrics returns a singleton instance of the client metrics
-// that are shared across all gRPC clients that this process creates.
-//
-// This function panics if the metrics cannot be registered with the default
-// Prometheus registry.
-func mustGetClientMetrics() *grpcprom.ClientMetrics {
-	clientMetricsOnce.Do(func() {
-		clientMetrics = grpcprom.NewClientMetrics(
-			grpcprom.WithClientCounterOptions(),
-			grpcprom.WithClientHandlingTimeHistogram(), // record the overall request latency for a gRPC request
-			grpcprom.WithClientStreamRecvHistogram(),   // record how long it takes for a client to receive a message during a streaming RPC
-			grpcprom.WithClientStreamSendHistogram(),   // record how long it takes for a client to send a message during a streaming RPC
-		)
-
-		prometheus.DefaultRegisterer.MustRegister(clientMetrics)
-	})
-
-	return clientMetrics
 }
 
 // addDefaultPort adds a default port to a URL if one is not specified.
