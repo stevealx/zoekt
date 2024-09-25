@@ -57,9 +57,12 @@ func main() {
 	githubURL := flag.String("url", "", "GitHub Enterprise url. If not set github.com will be used as the host.")
 	org := flag.String("org", "", "organization to mirror")
 	user := flag.String("user", "", "user to mirror")
-	token := flag.String("token",
-		filepath.Join(os.Getenv("HOME"), ".github-token"),
-		"file holding API token.")
+
+	token := flag.String("token", "", "file holding API token.")
+	if _, err := os.Stat(filepath.Join(os.Getenv("HOME"), ".github-token")); err == nil {
+		*token = filepath.Join(os.Getenv("HOME"), ".github-token")
+	}
+	
 	forks := flag.Bool("forks", false, "also mirror forks.")
 	deleteRepos := flag.Bool("delete", false, "delete missing repos")
 	namePattern := flag.String("name", "", "only clone repos whose name matches the given regexp.")
