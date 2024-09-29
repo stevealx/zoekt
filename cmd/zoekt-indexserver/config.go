@@ -38,6 +38,7 @@ type ConfigWrapper struct {
 }
 
 type ConfigEntry struct {
+	Type                   string
 	GithubUser             string
 	GithubOrg              string
 	BitBucketServerProject string
@@ -183,7 +184,7 @@ func executeMirror(cfg []ConfigEntry, repoDir string, pendingRepos chan<- string
 	cfg = randomize(cfg)
 	for _, c := range cfg {
 		var cmd *exec.Cmd
-		if c.GitHubURL != "" || c.GithubUser != "" || c.GithubOrg != "" {
+		if c.Type == "github" || c.GitHubURL != "" || c.GithubUser != "" || c.GithubOrg != "" {
 			cmd = exec.Command("zoekt-mirror-github",
 				"-dest", repoDir, "-delete")
 			if c.GitHubURL != "" {
@@ -214,6 +215,27 @@ func executeMirror(cfg []ConfigEntry, repoDir string, pendingRepos chan<- string
 			}
 			if c.IncludeForks {
 				cmd.Args = append(cmd.Args, "-forks")
+			}
+		} else if c.Type == "gitlab" || c.GitLabURL != "" {
+			cmd = exec.Command("zoekt-mirror-gitlab", "-dest", repoDir)
+
+			if c.GitLabURL != "" {
+				cmd.Args = append(cmd.Args, "-url", c.GitLabURL)
+			} else {
+				cmd.Args = append(cmd.Args, "-url", "https://gitlab.com/api/v4/")
+			}
+
+			if c.Name != "" {
+				cmd.Args = append(cmd.Args, "-name", c.Name)
+			}
+			if c.Exclude != "" {
+				cmd.Args = append(cmd.Args, "-exclude", c.Exclude)
+			}
+			if c.OnlyPublic {
+				cmd.Args = append(cmd.Args, "-public")
+			}
+			if c.CredentialPath != "" {
+				cmd.Args = append(cmd.Args, "-token", c.CredentialPath)
 			}
 		} else if c.GitilesURL != "" {
 			cmd = exec.Command("zoekt-mirror-gitiles",
@@ -250,21 +272,6 @@ func executeMirror(cfg []ConfigEntry, repoDir string, pendingRepos chan<- string
 			}
 			if c.CredentialPath != "" {
 				cmd.Args = append(cmd.Args, "-credentials", c.CredentialPath)
-			}
-		} else if c.GitLabURL != "" {
-			cmd = exec.Command("zoekt-mirror-gitlab",
-				"-dest", repoDir, "-url", c.GitLabURL)
-			if c.Name != "" {
-				cmd.Args = append(cmd.Args, "-name", c.Name)
-			}
-			if c.Exclude != "" {
-				cmd.Args = append(cmd.Args, "-exclude", c.Exclude)
-			}
-			if c.OnlyPublic {
-				cmd.Args = append(cmd.Args, "-public")
-			}
-			if c.CredentialPath != "" {
-				cmd.Args = append(cmd.Args, "-token", c.CredentialPath)
 			}
 		} else if c.GerritApiURL != "" {
 			cmd = exec.Command("zoekt-mirror-gerrit",
