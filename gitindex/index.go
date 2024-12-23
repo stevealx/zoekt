@@ -149,7 +149,13 @@ func setTemplates(repo *zoekt.Repository, u *url.URL, typ string) error {
 		// https://<bitbucketserver-host>/projects/<project>/repos/<repo>/commits/5be7ca73b898bf17a08e607918accfdeafe1e0bc
 		// https://<bitbucketserver-host>/projects/<project>/repos/<repo>/browse/<file>?at=5be7ca73b898bf17a08e607918accfdeafe1e0bc
 		repo.CommitURLTemplate = u.String() + "/commits/{{.Version}}"
-		repo.FileURLTemplate = u.String() + "/{{.Path}}?at={{.Version}}"
+		repo.FileURLTemplate = u.String() + "/browse/{{.Path}}?at={{.Version}}"
+		repo.LineFragmentTemplate = "#{{.LineNumber}}"
+	case "bitbucket-cloud":
+		// https://api.bitbucket.org/<workspace>/<repo>/commits/5be7ca73b898bf17a08e607918accfdeafe1e0bc
+		// https://bitbucket.org/projects/<project>/src/<version>/<file>
+		repo.CommitURLTemplate = u.String() + "/commits/{{.Version}}"
+		repo.FileURLTemplate = u.String() + "/src/{{.Version}}/{{.Path}}"
 		repo.LineFragmentTemplate = "#{{.LineNumber}}"
 	case "gitlab":
 		// https://gitlab.com/gitlab-org/omnibus-gitlab/-/commit/b152c864303dae0e55377a1e2c53c9592380ffed
